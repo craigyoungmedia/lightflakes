@@ -44,16 +44,21 @@ with socket.create_connection((host, 22), timeout=20) as sock, paramiko.Transpor
                 target.write(token)
             try:
                 sftp.chmod(probe, 0o644)
-                with urlopen("https://lightflakes.com/" + probe, timeout=12) as response:
-                    if response.read(128) == token:
-                        print("Verified the SFTP folder for lightflakes.com.")
-                        break
-            except OSError as error:
-                print("Domain check:", type(error).__name__, getattr(error, "code", ""))
+                for scheme in ("https", "http"):
+                    try:
+                        with urlopen(f"{scheme}://lightflakes.com/{probe}", timeout=12) as response:
+                            if response.read(128) == token:
+                                break
+                    except OSError as error:
+                        print(f"{scheme} folder check: {error}")
+                else:
+                    continue
+                print(f"Verified the Lightflakes folder over {scheme.upper()}.")
+                break
             finally:
                 sftp.remove(probe)
         else:
-            raise SystemExit("Login succeeded, but no accessible folder served the HTTPS domain check. Verify the IONOS domain target and SSL certificate.")
+            raise SystemExit("Login succeeded, but no accessible folder served the domain check. Verify the IONOS domain target and SSL certificate.")
         staging = ".lightflakes-" + run + ".html"
         try:
             with sftp.open(staging, "wb") as target:
@@ -63,6 +68,7 @@ with socket.create_connection((host, 22), timeout=20) as sock, paramiko.Transpor
                     raise SystemExit("Uploaded file failed verification.")
             sftp.chmod(staging, 0o644)
             sftp.posix_rename(staging, "index.html")
+            print("Published index.html over SFTP.")
         finally:
             try:
                 sftp.remove(staging)
@@ -75,8 +81,8 @@ for attempt in range(4):
             if result.read() == page:
                 print("Verified the published homepage at https://lightflakes.com/")
                 break
-    except OSError:
-        pass
+    except OSError as error:
+        print(f"HTTPS verification: {error}")
     time.sleep(3)
 else:
     raise SystemExit("SFTP upload succeeded, but the public domain did not serve the matching homepage.")
