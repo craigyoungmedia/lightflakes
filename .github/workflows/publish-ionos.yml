@@ -1,0 +1,25 @@
+name: Publish Lightflakes to IONOS
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lightflakes-production
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install SFTP client
+        run: sudo apt-get update -qq && sudo apt-get install -y python3-paramiko
+      - name: Publish and verify homepage
+        env:
+          IONOS_HOST: ${{ vars.IONOS_HOST }}
+          IONOS_USER: ${{ vars.IONOS_USER }}
+          IONOS_PASSWORD: ${{ secrets.IONOS_PASSWORD }}
+        run: /usr/bin/python3 .github/scripts/publish.py
