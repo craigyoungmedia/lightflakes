@@ -2,6 +2,7 @@ import base64
 import hashlib
 import os
 import posixpath
+import secrets
 import socket
 import time
 from pathlib import Path
@@ -30,9 +31,29 @@ with socket.create_connection((host, 22), timeout=20) as sock, paramiko.Transpor
     with paramiko.SFTPClient.from_transport(transport) as sftp:
         sftp.get_channel().settimeout(25)
         home = sftp.normalize(".")
-        # Support both the account webspace root and an absolute Lightflakes home.
-        folder = home if posixpath.basename(home) == "lightflakes" else posixpath.join(home, "lightflakes")
-        sftp.chdir(folder)
+        candidates = [posixpath.join(home, "lightflakes"), "/lightflakes",
+                      "/kunden/homepages/37/d353520313/htdocs/lightflakes", home]
+        for folder in dict.fromkeys(candidates):
+            try:
+                sftp.chdir(folder)
+            except (FileNotFoundError, PermissionError):
+                continue
+            probe = "lightflakes-check-" + secrets.token_hex(12) + ".txt"
+            token = secrets.token_hex(24).encode()
+            with sftp.open(probe, "wx") as target:
+                target.write(token)
+            try:
+                sftp.chmod(probe, 0o644)
+                with urlopen("https://lightflakes.com/" + probe, timeout=12) as response:
+                    if response.read(128) == token:
+                        print("Verified the SFTP folder for lightflakes.com.")
+                        break
+            except OSError as error:
+                print("Domain check:", type(error).__name__, getattr(error, "code", ""))
+            finally:
+                sftp.remove(probe)
+        else:
+            raise SystemExit("Login succeeded, but no accessible folder served the HTTPS domain check. Verify the IONOS domain target and SSL certificate.")
         staging = ".lightflakes-" + run + ".html"
         try:
             with sftp.open(staging, "wb") as target:
