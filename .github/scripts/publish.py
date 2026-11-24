@@ -19,6 +19,11 @@ if not all((host, user, password)):
 page = Path("production/index.html").read_bytes()
 if b"noindex" in page.lower() or b"https://sidedoorreview.com/maps" not in page:
     raise SystemExit("Expected the indexable production homepage.")
+files = {
+    "sitemap.xml": Path("production/sitemap.xml").read_bytes(),
+    "robots.txt": Path("production/robots.txt").read_bytes(),
+    "index.html": page,
+}
 run = os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]
 with socket.create_connection((host, 22), timeout=20) as sock, paramiko.Transport(sock) as transport:
     transport.get_security_options().key_types = ("ssh-ed25519",)
@@ -59,30 +64,34 @@ with socket.create_connection((host, 22), timeout=20) as sock, paramiko.Transpor
                 sftp.remove(probe)
         else:
             raise SystemExit("Login succeeded, but no accessible folder served the domain check. Verify the IONOS domain target and SSL certificate.")
-        staging = ".lightflakes-" + run + ".html"
-        try:
-            with sftp.open(staging, "wb") as target:
-                target.write(page)
-            with sftp.open(staging, "rb") as uploaded:
-                if uploaded.read() != page:
-                    raise SystemExit("Uploaded file failed verification.")
-            sftp.chmod(staging, 0o644)
-            sftp.posix_rename(staging, "index.html")
-            print("Published index.html over SFTP.")
-        finally:
+        for name, content in files.items():
+            staging = ".lightflakes-" + run + "-" + name
             try:
-                sftp.remove(staging)
-            except FileNotFoundError:
-                pass
+                with sftp.open(staging, "wb") as target:
+                    target.write(content)
+                with sftp.open(staging, "rb") as uploaded:
+                    if uploaded.read() != content:
+                        raise SystemExit("Uploaded file failed verification.")
+                sftp.chmod(staging, 0o644)
+                sftp.posix_rename(staging, name)
+                print(f"Published {name} over SFTP.")
+            finally:
+                try:
+                    sftp.remove(staging)
+                except FileNotFoundError:
+                    pass
 
-for attempt in range(4):
-    try:
-        with urlopen("https://lightflakes.com/?release=" + run, timeout=15) as result:
-            if result.read() == page:
-                print("Verified the published homepage at https://lightflakes.com/")
-                break
-    except OSError as error:
-        print(f"HTTPS verification: {error}")
-    time.sleep(3)
-else:
-    raise SystemExit("SFTP upload succeeded, but the public domain did not serve the matching homepage.")
+for name, content in files.items():
+    path = "" if name == "index.html" else name
+    url = "https://lightflakes.com/" + path
+    for attempt in range(4):
+        try:
+            with urlopen(url, timeout=15) as response:
+                if response.status == 200 and response.read() == content:
+                    print(f"Verified {url}")
+                    break
+        except OSError as error:
+            print(f"HTTPS verification: {error}")
+        time.sleep(3)
+    else:
+        raise SystemExit(f"Public verification failed for {url}.")
